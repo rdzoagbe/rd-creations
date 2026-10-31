@@ -126,6 +126,7 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   const cronSecret = req.headers.get("x-dzoft-cron-secret") || "";
   let ownerAuthorized = false;
+  let ownerClient: ReturnType<typeof createClient> | null = null;
   if (cronSecret) {
     const { data: valid, error } = await db.rpc("verify_email_outbox_cron", { p_secret: cronSecret });
     if (error || valid !== true) return json({ error: "not authorized" }, 401, headers);
@@ -143,11 +144,12 @@ Deno.serve(async (req) => {
     const verified = (authData.user.factors || []).some((f: { status: string }) => f.status === "verified");
     if (verified && jwtClaims(bearer).aal !== "aal2") return json({ error: "two-step verification required" }, 403, headers);
     ownerAuthorized = true;
+    ownerClient = caller;
   }
 
   if (body.retry_id) {
-    if (!ownerAuthorized) return json({ error: "owner access required" }, 403, headers);
-    const { error } = await db.rpc("retry_email_outbox", { p_id: String(body.retry_id) });
+    if (!ownerAuthorized || !ownerClient) return json({ error: "owner access required" }, 403, headers);
+    const { error } = await ownerClient.rpc("retry_email_outbox", { p_id: String(body.retry_id) });
     if (error) return json({ error: "email could not be queued for retry" }, 409, headers);
   }
 
